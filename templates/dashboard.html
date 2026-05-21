@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en" data-theme="{{ theme }}">
+<head>
+<meta charset="utf-8" />
+<title>{{ client.name }} — {{ perf.report_month }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root[data-theme="purple"] {
+  --primary: #0C9EFF; --primary-dim: #0A7FD4;
+  --bg: #0c1117; --surface: #161c25; --surface-2: #1d2531; --border: #263042;
+  --text: #f1f6fb; --muted: #95a6bd;
+  --green: #34d399; --red: #f87171;
+}
+:root[data-theme="yellow"] {
+  --primary: #FCD72B; --primary-dim: #d4b322;
+  --bg: #070705; --surface: #141410; --surface-2: #1c1c15; --border: #2a2a1e;
+  --text: #fafaf0; --muted: #b8b59a;
+  --green: #4ade80; --red: #fb7185;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  background: var(--bg); color: var(--text);
+  font-size: 10.5px; line-height: 1.35; -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: 'DM Mono', ui-monospace, monospace; font-feature-settings: "tnum" 1; }
+
+/* A4 portrait, zero printer margins — page wrapper owns its own padding. */
+@page { size: A4 portrait; margin: 0; }
+.page {
+  width: 210mm; height: 297mm;
+  padding: 8mm 9mm;
+  margin: 0 auto;
+  display: flex; flex-direction: column; gap: 5px;
+  overflow: hidden;
+  page-break-inside: avoid; break-inside: avoid;
+}
+.page + .page { page-break-before: always; break-before: page; }
+
+/* Header */
+.header {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dim) 100%);
+  color: #0b0a10; border-radius: 8px; padding: 10px 14px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  position: relative;
+}
+:root[data-theme="yellow"] .header { color: #0a0a06; }
+.header h1 { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+.header .sub { font-size: 10px; opacity: 0.85; margin-top: 2px; }
+.header .right { text-align: right; }
+.header .right .title { font-size: 12.5px; font-weight: 700; line-height: 1.2; }
+.header .right .acct { font-family: 'DM Sans', system-ui, sans-serif; font-size: 11px; font-weight: 500; opacity: 0.9; margin-top: 2px; }
+.header .right .meta { font-size: 9.5px; opacity: 0.8; margin-top: 2px; }
+
+.theme-toggle {
+  position: absolute; top: 8px; right: 10px;
+  background: rgba(0,0,0,0.25); color: #fff;
+  border: 1px solid rgba(255,255,255,0.3);
+  padding: 3px 8px; font-size: 9px; border-radius: 12px; cursor: pointer;
+  font-family: inherit;
+}
+body.pdf-mode .theme-toggle { display: none !important; }
+
+/* Tag bar */
+.tagbar {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 6px 10px; border-radius: 8px;
+  font-size: 9.5px; color: var(--muted);
+}
+.tagbar b { color: var(--text); font-weight: 600; }
+.tagbar .sep { width: 1px; height: 11px; background: var(--border); }
+
+/* KPI Row — 5 narrow cards across portrait width */
+.kpi-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.kpi {
+  background: var(--surface); border: 1px solid var(--border);
+  border-top: 2px solid var(--border); border-radius: 6px;
+  padding: 8px 9px; display: flex; flex-direction: column; gap: 2px;
+  min-height: 64px;
+}
+.kpi.accent {
+  border-top-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 8%, var(--surface)) 0%, var(--surface) 80%);
+}
+.kpi.up { border-top-color: var(--green); }
+.kpi.down { border-top-color: var(--red); }
+.kpi .label { font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.kpi .value { font-family: 'DM Mono', monospace; font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+.kpi .value.accent { color: var(--primary); }
+.kpi .value.up { color: var(--green); }
+.kpi .value.down { color: var(--red); }
+.kpi .sub { font-size: 8.5px; color: var(--muted); }
+
+/* Cards */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px 11px;
+  display: flex; flex-direction: column;
+}
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; gap: 8px; }
+.card-head .title { font-size: 11.5px; font-weight: 700; }
+.card-head .total { font-family: 'DM Mono', monospace; font-weight: 700; font-size: 12px; }
+.badges { display: flex; gap: 5px; margin-bottom: 4px; flex-wrap: wrap; }
+.badge {
+  font-size: 8.5px; padding: 1px 7px; border-radius: 9px;
+  background: var(--surface-2); color: var(--muted); border: 1px solid var(--border);
+}
+.badge.up { color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, var(--border)); }
+.badge.down { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, var(--border)); }
+.badge.primary { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); }
+
+/* Section: smaller chart, big table */
+.section { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
+.section .chart-card { flex: 0 0 auto; height: 78mm; }    /* taller chart, still room for ~12 table rows */
+.section .table-card { flex: 1; min-height: 0; overflow: hidden; }
+.chart-wrap { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+.chart-wrap svg { width: 100%; height: 100%; display: block; }
+
+/* SVG labels — sized for the taller portrait chart card */
+.bar-label { fill: var(--text); font-size: 8px; font-family: 'DM Mono', monospace; font-weight: 600; }
+.axis-label { fill: var(--muted); font-size: 11.5px; font-family: 'DM Sans', sans-serif; font-weight: 500; }
+.grid-line { stroke: var(--border); stroke-width: 0.6; }
+.axis-line { stroke: var(--border); stroke-width: 1; }
+.bar-up { fill: var(--green); }
+.bar-down { fill: var(--red); }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: 9.5px; table-layout: fixed; }
+thead th {
+  text-align: left; font-weight: 600; font-size: 8.5px;
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 5px 6px; border-bottom: 1px solid var(--border);
+}
+tbody td { padding: 3.5px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
+td.num, th.num { text-align: right; font-family: 'DM Mono', monospace; }
+td.up { color: var(--green); font-weight: 700; }
+td.down { color: var(--red); font-weight: 700; }
+
+.chip {
+  display: inline-block; padding: 1px 7px; border-radius: 9px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 500;
+}
+.pill { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 8.5px; font-weight: 600; }
+.pill.buy { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 30%, var(--border)); }
+.pill.sell { background: color-mix(in srgb, var(--red) 18%, transparent); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 30%, var(--border)); }
+.pill.paper { background: color-mix(in srgb, var(--primary) 18%, transparent); color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border)); }
+
+.footer {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 8.5px; color: var(--muted); padding: 4px 2px 0;
+  border-top: 1px solid var(--border); margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+@media print {
+  .theme-toggle { display: none; }
+  html, body { background: var(--bg) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+</head>
+<body>
+
+{% macro page_header(label) %}
+  <div class="header">
+    <button class="theme-toggle" onclick="toggleTheme()">Switch Theme</button>
+    <div>
+      <h1>{{ client.strategy }} Strategy</h1>
+      <div class="sub">{{ label }} · {{ perf.period_label }} · {{ perf.report_month }} · {{ source_site }}</div>
+    </div>
+    <div class="right">
+      <div class="title">{{ client.name }}</div>
+      <div class="acct">Account no: {{ client.account_number }}</div>
+      <div class="meta">Generated {{ perf.generated_date }}</div>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro page_footer(num) %}
+  <div class="footer">
+    <div>All figures are for informational purposes only and do not constitute financial advice.</div>
+    <div>{{ source_site }}</div>
+    <div>Page {{ num }} of 2 · {{ client.strategy }} · {{ perf.period_label }} · Confidential</div>
+  </div>
+{% endmacro %}
+
+
+<!-- =================== PAGE 1 — Overview & Open Positions =================== -->
+<div class="page">
+
+  {{ page_header("Account Overview & Open Positions") }}
+
+  <div class="tagbar">
+    <span>Period: <b>{{ perf.period_label }}</b></span><span class="sep"></span>
+    <span>Strategy: <b>{{ client.strategy }}</b></span><span class="sep"></span>
+    <span>Risk: <b>{{ client.risk_level or '—' }}</b></span><span class="sep"></span>
+    <span>Platform: <b>{{ client.platform }}</b></span>
+    {% if client.is_paper %}<span class="pill paper" style="margin-left:2px">Paper</span>{% endif %}
+    <span class="sep"></span>
+    <span>Open positions: <b>{{ perf.open_positions_count }}</b></span>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi accent">
+      <div class="label">Account Balance</div>
+      <div class="value accent">{{ fmt_money(perf.account_size) }}</div>
+      <div class="sub">Cash {{ fmt_money(perf.cash) }}</div>
+    </div>
+    <div class="kpi {{ 'up' if perf.overall_profit >= 0 else 'down' }}">
+      <div class="label">Overall P&amp;L</div>
+      <div class="value {{ 'up' if perf.overall_profit >= 0 else 'down' }}">{{ fmt_money_signed(perf.overall_profit) }}</div>
+      <div class="sub">{{ fmt_pct_signed(perf.overall_roi_pct) }} ROI</div>
+    </div>
+    <div class="kpi {{ 'up' if (perf.period_pnl or 0) >= 0 else 'down' }}">
+      <div class="label">{{ perf.period_label }} P&amp;L</div>
+      {% if perf.period_pnl is none %}
+      <div class="value" style="color: var(--muted);">—</div>
+      <div class="sub">Not exposed by API</div>
+      {% else %}
+      <div class="value {{ 'up' if perf.period_pnl >= 0 else 'down' }}">{{ fmt_money_signed(perf.period_pnl) }}</div>
+      <div class="sub">{{ fmt_pct_signed(perf.period_pnl_pct) }} over period</div>
+      {% endif %}
+    </div>
+    <div class="kpi {{ 'up' if perf.floating_pnl >= 0 else 'down' }}">
+      <div class="label">Floating P&amp;L</div>
+      <div class="value {{ 'up' if perf.floating_pnl >= 0 else 'down' }}">{{ fmt_money_signed(perf.floating_pnl) }}</div>
+      <div class="sub">{{ fmt_pct_signed(perf.floating_pnl_pct) }} unrealised</div>
+    </div>
+    <div class="kpi {{ 'up' if perf.equity_growth_dollar >= 0 else 'down' }}">
+      <div class="label">Growth</div>
+      <div class="value {{ 'up' if perf.equity_growth_dollar >= 0 else 'down' }}">{{ fmt_pct_signed(perf.equity_growth_pct) }}</div>
+      <div class="sub">{{ fmt_money_signed(perf.equity_growth_dollar) }} vs last close</div>
+    </div>
+  </div>
+
+  <div class="section">
+    {% if perf.report_period == 'all' and perf.monthly_returns %}
+    <div class="card chart-card" style="height: 48mm;">
+      <div class="card-head">
+        <div class="title">Average Monthly Return</div>
+        <div class="total" style="color: var(--primary);">{{ perf.monthly_returns|length }} months</div>
+      </div>
+      <div class="chart-wrap">{{ monthly_returns_svg | safe }}</div>
+    </div>
+    {% endif %}
+
+    <div class="card chart-card"{% if perf.report_period == 'all' and perf.monthly_returns %} style="height: 50mm;"{% endif %}>
+      <div class="card-head">
+        <div class="title">Open Positions — Floating P&amp;L by Ticker</div>
+        <div class="total" style="color: {{ 'var(--green)' if perf.floating_pnl >= 0 else 'var(--red)' }};">{{ fmt_money_signed(perf.floating_pnl) }}</div>
+      </div>
+      <div class="badges">
+        <span class="badge primary">{{ perf.open_positions_count }} Positions</span>
+        <span class="badge up">{{ open_gaining }} Gaining</span>
+        <span class="badge down">{{ open_losing }} Losing</span>
+      </div>
+      <div class="chart-wrap">{{ open_chart_svg | safe }}</div>
+    </div>
+
+    <div class="card table-card">
+      <div class="card-head">
+        <div class="title">Open Position Detail</div>
+        <span class="badge {{ 'up' if perf.floating_pnl >= 0 else 'down' }}">Floating {{ fmt_money_signed(perf.floating_pnl) }}</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th style="width: 16%">Ticker</th>
+          <th class="num" style="width: 10%">Qty</th>
+          <th class="num" style="width: 18%">Price</th>
+          <th class="num" style="width: 20%">Market Value</th>
+          <th class="num" style="width: 16%">Floating %</th>
+          <th class="num" style="width: 20%">Floating $</th>
+        </tr></thead>
+        <tbody>
+          {% for p in perf.open_positions %}
+          <tr>
+            <td><span class="chip">{{ p.ticker }}</span></td>
+            <td class="num">{{ '{:,}'.format(p.qty) }}</td>
+            <td class="num">{{ fmt_money(p.current_price) }}</td>
+            <td class="num">{{ fmt_money(p.market_value) }}</td>
+            <td class="num {{ 'up' if p.floating_pct >= 0 else 'down' }}">{{ fmt_pct_signed(p.floating_pct) }}</td>
+            <td class="num {{ 'up' if p.floating_dollar >= 0 else 'down' }}">{{ fmt_money_signed(p.floating_dollar) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:14px">No open positions</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {{ page_footer(1) }}
+</div>
+
+
+<!-- =================== PAGE 2 — Closed Trades / Orders =================== -->
+<div class="page">
+
+  {{ page_header("Closed Trades & Order Activity") }}
+
+  <div class="tagbar">
+    <span>Period: <b>{{ perf.period_label }}</b></span><span class="sep"></span>
+    <span>Orders: <b>{{ perf.recent_orders|length }}</b></span><span class="sep"></span>
+    <span>Buys: <b>{{ buy_count }}</b></span><span class="sep"></span>
+    <span>Sells: <b>{{ sell_count }}</b></span><span class="sep"></span>
+    <span>Total notional: <b class="mono">{{ fmt_money(orders_notional_total) }}</b></span>
+  </div>
+
+  <div class="section">
+    <div class="card chart-card">
+      <div class="card-head">
+        <div class="title">Closed Trades — Net Notional by Ticker · {{ perf.period_label }}</div>
+        <div class="total" style="color: var(--primary);">{{ fmt_money(orders_notional_total) }}</div>
+      </div>
+      <div class="badges">
+        <span class="badge primary">{{ perf.recent_orders|length }} Orders</span>
+        <span class="badge up">{{ buy_count }} Buys</span>
+        <span class="badge down">{{ sell_count }} Sells</span>
+      </div>
+      <div class="chart-wrap">{{ orders_chart_svg | safe }}</div>
+    </div>
+
+    <div class="card table-card">
+      <div class="card-head">
+        <div class="title">Closed Trade Log · {{ perf.period_label }}</div>
+        <span class="badge primary">{{ perf.recent_orders|length }} total</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th style="width: 14%">Ticker</th>
+          <th style="width: 10%">Side</th>
+          <th style="width: 22%">When</th>
+          <th class="num" style="width: 10%">Qty</th>
+          <th class="num" style="width: 15%">Price</th>
+          <th class="num" style="width: 17%">Notional</th>
+          <th style="width: 12%">Status</th>
+        </tr></thead>
+        <tbody>
+          {% for o in perf.recent_orders %}
+          <tr>
+            <td><span class="chip">{{ o.ticker }}</span></td>
+            <td><span class="pill {{ 'buy' if o.side == 'buy' else 'sell' }}">{{ o.side|upper }}</span></td>
+            <td>{{ o.when }}</td>
+            <td class="num">{{ '{:,}'.format(o.qty) }}</td>
+            <td class="num">{{ fmt_money(o.price) }}</td>
+            <td class="num">{{ fmt_money(o.notional) }}</td>
+            <td><span style="color:var(--muted)">{{ o.status }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:14px">No orders in this period</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {{ page_footer(2) }}
+</div>
+
+
+<script>
+function toggleTheme(){
+  const cur = document.documentElement.getAttribute('data-theme');
+  document.documentElement.setAttribute('data-theme', cur === 'purple' ? 'yellow' : 'purple');
+}
+</script>
+</body>
+</html>
