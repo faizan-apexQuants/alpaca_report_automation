@@ -132,39 +132,6 @@ def _filter_orders(orders_raw: list[dict], *, lookback_days: int | None, now: dt
     return out
 
 
-def _monthly_returns(orders_raw: list[dict], account_size: float) -> list[dict]:
-    """Aggregate every filled order by calendar month and express monthly realized
-    P&L (sells - buys notional) as a percentage of the current account balance.
-
-    Returns a chronologically ordered list:
-        [{"month_key": "2025-03", "label": "Mar 2025", "pnl": 412.55, "return_pct": 2.06}, ...]
-    Months in which the account had no activity are skipped.
-    """
-    if not orders_raw or account_size <= 0:
-        return []
-    buckets: dict[str, float] = {}
-    for o in orders_raw:
-        ts = _parse_iso(o.get("created_at"))
-        if ts is None:
-            continue
-        notional = _num(o.get("filled_avg_price")) * _int(o.get("qty"))
-        if notional == 0:
-            continue
-        sign = 1.0 if (o.get("side") or "").lower() == "sell" else -1.0
-        key = ts.strftime("%Y-%m")
-        buckets[key] = buckets.get(key, 0.0) + sign * notional
-    out: list[dict] = []
-    for key in sorted(buckets):
-        pnl = buckets[key]
-        out.append({
-            "month_key": key,
-            "label": dt.datetime.strptime(key, "%Y-%m").strftime("%b %Y"),
-            "pnl": pnl,
-            "return_pct": (pnl / account_size * 100.0),
-        })
-    return out
-
-
 def _performance_view(rec: dict, *, period: str, now: dt.datetime) -> dict:
     if period not in PERIODS:
         period = "monthly"
@@ -202,8 +169,6 @@ def _performance_view(rec: dict, *, period: str, now: dt.datetime) -> dict:
 
     recent_orders = _filter_orders(orders_raw, lookback_days=days, now=now)
     period_pnl, period_pnl_pct = _select_period_pnl(period, pm, pct)
-    # monthly return time-series is only useful on the lifetime "all" report.
-    monthly_returns = _monthly_returns(orders_raw, account_size) if period == "all" else []
 
     return {
         "report_period": period,
@@ -235,7 +200,6 @@ def _performance_view(rec: dict, *, period: str, now: dt.datetime) -> dict:
         "short_market_value": _num(em.get("short_market_value")),
         "open_positions": open_positions,
         "recent_orders": recent_orders,
-        "monthly_returns": monthly_returns,
     }
 
 

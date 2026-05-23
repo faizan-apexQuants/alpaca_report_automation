@@ -192,75 +192,6 @@ def _svg_open_positions(positions: list[dict], width: int = 720, height: int = 2
     </svg>'''
 
 
-def _svg_monthly_returns(months: list[dict], width: int = 720, height: int = 170) -> str:
-    """Vertical bar chart: monthly return % over the full account history."""
-    if not months:
-        return _empty_svg(width, height, "No monthly history")
-    n = len(months)
-    rotate_labels = n > 10
-    pad_b = 46 if rotate_labels else 32
-    # left pad sized to the widest axis label (e.g. "-12.5%").
-    max_abs_pct = max((abs(m["return_pct"]) for m in months), default=0.0)
-    axis_label_w = max(6, len(f"{max_abs_pct:.1f}%")) * 6 + 12
-    pad_l, pad_r, pad_t = max(36, axis_label_w), 14, 22
-    iw = width - pad_l - pad_r
-    ih = height - pad_t - pad_b
-    bar_w = (iw / n) * 0.74
-    gap = (iw / n) * 0.26
-    hi = max((m["return_pct"] for m in months), default=0.0); hi = max(hi, 0.0)
-    lo = min((m["return_pct"] for m in months), default=0.0); lo = min(lo, 0.0)
-    if hi > 0: hi *= 1.20
-    if lo < 0: lo *= 1.20
-    span = (hi - lo) or 1.0
-    value_font = max(7.0, min(11.0, bar_w * 0.55))
-    label_font = max(7.0, min(10.5, bar_w * 0.80 if rotate_labels else bar_w * 0.50))
-    show_value_labels = bar_w >= 16
-
-    def y_of(v: float) -> float:
-        return pad_t + ih * (1 - (v - lo) / span)
-    zero_y = y_of(0)
-
-    grid = []
-    for i in range(5):
-        gv = lo + span * i / 4
-        gy = y_of(gv)
-        grid.append(f'<line class="grid-line" x1="{pad_l}" x2="{pad_l+iw}" y1="{gy}" y2="{gy}"/>')
-        grid.append(f'<text class="axis-label" x="{pad_l-6}" y="{gy+3}" text-anchor="end">{gv:+.1f}%</text>')
-
-    bars, labels, vals = [], [], []
-    for i, m in enumerate(months):
-        v = m["return_pct"]
-        x = pad_l + gap/2 + i * (bar_w + gap)
-        y = y_of(v) if v >= 0 else zero_y
-        h = abs(y_of(v) - zero_y)
-        cls = "bar-up" if v >= 0 else "bar-down"
-        bars.append(f'<rect class="{cls}" x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h:.1f}" rx="2"/>')
-        cx = x + bar_w/2
-        if rotate_labels:
-            ty = pad_t + ih + 8
-            labels.append(
-                f'<text class="axis-label" x="{cx:.1f}" y="{ty:.1f}" text-anchor="end" '
-                f'font-size="{label_font:.1f}" transform="rotate(-45 {cx:.1f} {ty:.1f})">{html.escape(m["label"])}</text>'
-            )
-        else:
-            labels.append(
-                f'<text class="axis-label" x="{cx:.1f}" y="{pad_t+ih+13}" '
-                f'text-anchor="middle" font-size="{label_font:.1f}">{html.escape(m["label"])}</text>'
-            )
-        if show_value_labels:
-            ly = y - 3 if v >= 0 else y + h + value_font
-            vals.append(
-                f'<text class="bar-label" x="{cx:.1f}" y="{ly:.1f}" text-anchor="middle" '
-                f'font-size="{value_font:.1f}">{v:+.1f}%</text>'
-            )
-
-    return f'''<svg viewBox="0 0 {width} {height}" width="100%" preserveAspectRatio="none">
-      {''.join(grid)}
-      <line class="axis-line" x1="{pad_l}" x2="{pad_l+iw}" y1="{zero_y}" y2="{zero_y}"/>
-      {''.join(bars)}{''.join(vals)}{''.join(labels)}
-    </svg>'''
-
-
 # ---------------- main renderer ----------------
 
 _env = Environment(
@@ -291,7 +222,6 @@ def render(client: dict, performance: dict, *, theme: str = "purple", page_num: 
         "open_losing": open_losing,
         "orders_chart_svg": _svg_orders_by_ticker(orders),
         "open_chart_svg": _svg_open_positions(positions),
-        "monthly_returns_svg": _svg_monthly_returns(performance.get("monthly_returns") or []),
         "fmt_money": fmt_money,
         "fmt_money_signed": fmt_money_signed,
         "fmt_pct_signed": fmt_pct_signed,
