@@ -102,21 +102,40 @@ def _select_period_pnl(period: str, pm: dict, pct: dict) -> tuple[float | None, 
     return None, None
 
 
-def _filter_orders(orders_raw: list[dict], *, lookback_days: int | None, now: dt.datetime) -> list[dict]:
+def _to_utc(d: dt.datetime) -> dt.datetime:
+    return d.astimezone(dt.timezone.utc) if d.tzinfo else d.replace(tzinfo=dt.timezone.utc)
+
+
+def _filter_orders(
+    orders_raw: list[dict],
+    *,
+    lookback_days: int | None,
+    now: dt.datetime,
+    window: tuple[dt.datetime, dt.datetime] | None = None,
+) -> list[dict]:
+    """Filter orders to a time window.
+
+    * `window` (start, end) takes precedence — used for explicit historical months.
+    * Otherwise falls back to `lookback_days` ending at `now`.
+    """
     out: list[dict] = []
-    cutoff = None
-    if lookback_days is not None:
-        cutoff_dt = now - dt.timedelta(days=lookback_days)
-        # The API returns timezone-aware UTC timestamps. Compare in UTC.
-        cutoff = cutoff_dt.astimezone(dt.timezone.utc) if cutoff_dt.tzinfo else cutoff_dt.replace(tzinfo=dt.timezone.utc)
+    cutoff_lo: dt.datetime | None = None
+    cutoff_hi: dt.datetime | None = None
+    if window is not None:
+        cutoff_lo = _to_utc(window[0])
+        cutoff_hi = _to_utc(window[1])
+    elif lookback_days is not None:
+        cutoff_lo = _to_utc(now - dt.timedelta(days=lookback_days))
 
     for o in orders_raw:
         ts = _parse_iso(o.get("created_at"))
-        if cutoff is not None:
+        if cutoff_lo is not None or cutoff_hi is not None:
             if ts is None:
                 continue  # cannot place untimed orders inside a window
-            ts_utc = ts.astimezone(dt.timezone.utc) if ts.tzinfo else ts.replace(tzinfo=dt.timezone.utc)
-            if ts_utc < cutoff:
+            ts_utc = _to_utc(ts)
+            if cutoff_lo is not None and ts_utc < cutoff_lo:
+                continue
+            if cutoff_hi is not None and ts_utc > cutoff_hi:
                 continue
         out.append({
             "id": str(o.get("id", ""))[:8],
@@ -132,10 +151,55 @@ def _filter_orders(orders_raw: list[dict], *, lookback_days: int | None, now: dt
     return out
 
 
-def _performance_view(rec: dict, *, period: str, now: dt.datetime) -> dict:
+def _month_window(year: int, month: int) -> tuple[dt.datetime, dt.datetime]:
+    """Return UTC (start_of_month, end_of_month_inclusive) datetimes."""
+    start = dt.datetime(year, month, 1, tzinfo=dt.timezone.utc)
+    if month == 12:
+        next_start = dt.datetime(year + 1, 1, 1, tzinfo=dt.timezone.utc)
+    else:
+        next_start = dt.datetime(year, month + 1, 1, tzinfo=dt.timezone.utc)
+    end = next_start - dt.timedelta(microseconds=1)
+    return start, end
+
+
+def _reconstruct_month_pnl_from_orders(orders_raw: list[dict], year: int, month: int) -> float:
+    """Sells − Buys notional for the calendar month (UTC). Same proxy as the
+    monthly-returns chart — not true realized P&L but useful when no historical
+    snapshot is available."""
+    total = 0.0
+    for o in orders_raw:
+        ts = _parse_iso(o.get("created_at"))
+        if ts is None:
+            continue
+        ts_utc = _to_utc(ts)
+        if ts_utc.year != year or ts_utc.month != month:
+            continue
+        notional = _num(o.get("filled_avg_price")) * _int(o.get("qty"))
+        sign = 1.0 if (o.get("side") or "").lower() == "sell" else -1.0
+        total += sign * notional
+    return total
+
+
+def _performance_view(
+    rec: dict,
+    *,
+    period: str,
+    now: dt.datetime,
+    month: tuple[int, int] | None = None,
+) -> dict:
     if period not in PERIODS:
         period = "monthly"
     label, days = PERIODS[period]
+    # When a historical month is requested, scope the orders to that calendar month
+    # and re-label everything accordingly. KPIs still reflect current account state.
+    month_window: tuple[dt.datetime, dt.datetime] | None = None
+    if month is not None and period == "monthly":
+        month_window = _month_window(*month)
+        days = None  # disable lookback-days; we'll use the explicit window
+        label_dt = dt.datetime(month[0], month[1], 1)
+        report_month_str = label_dt.strftime("%B %Y")
+    else:
+        report_month_str = now.strftime("%B %Y")
 
     pm = rec.get("performance_metrics") or {}
     pct = pm.get("pnl_percentages") or {}
@@ -161,20 +225,59 @@ def _performance_view(rec: dict, *, period: str, now: dt.datetime) -> dict:
     floating_total = sum(p["floating_dollar"] for p in open_positions)
     floating_total_pct = (floating_total / account_size * 100.0) if account_size else 0.0
 
-    # Period-over-period equity growth (most recent close vs previous close).
+    # Growth = realized return on the capital the client has actually committed.
+    #   Net Capital = Total Deposits − Total Withdrawals
+    #   Growth %    = Realized P&L ÷ Net Capital × 100
     equity_val = _num(em.get("equity"))
     last_equity = _num(em.get("last_equity"))
-    equity_growth_dollar = equity_val - last_equity
-    equity_growth_pct = (equity_growth_dollar / last_equity * 100.0) if last_equity else 0.0
+    realized_pnl = _num(pm.get("realized_pnl"))
+    net_capital = _num(pm.get("total_deposits")) - _num(pm.get("total_withdrawals"))
+    equity_growth_dollar = realized_pnl
+    equity_growth_pct = (realized_pnl / net_capital * 100.0) if net_capital else 0.0
 
-    recent_orders = _filter_orders(orders_raw, lookback_days=days, now=now)
+    recent_orders = _filter_orders(orders_raw, lookback_days=days, now=now, window=month_window)
     period_pnl, period_pnl_pct = _select_period_pnl(period, pm, pct)
+
+    # ---- Historical view overrides --------------------------------------------------
+    # When a past month was requested, prefer a real point-in-time snapshot from the
+    # GemAlgo `/portfolio-history` endpoint (attached upstream as `_historical_snapshot`).
+    # If the snapshot isn't available, reconstruct period P&L from the order log so at
+    # least the period KPI matches the trade activity shown below it.
+    is_historical = False
+    snapshot_source = None
+    if month is not None and period == "monthly":
+        is_historical = True
+        snap = rec.get("_historical_snapshot") or None
+        if isinstance(snap, dict):
+            snapshot_source = "api"
+            if snap.get("equity_at_end") is not None:
+                equity_val = _num(snap.get("equity_at_end"))
+            if snap.get("balance_at_end") is not None:
+                account_size = _num(snap.get("balance_at_end"))
+            if snap.get("realized_pnl") is not None:
+                realized_pnl = _num(snap.get("realized_pnl"))
+            if snap.get("unrealized_pnl") is not None:
+                floating_total = _num(snap.get("unrealized_pnl"))
+                floating_total_pct = (floating_total / account_size * 100.0) if account_size else 0.0
+            if snap.get("period_pnl") is not None:
+                period_pnl = _num(snap.get("period_pnl"))
+                period_pnl_pct = _num(snap.get("period_pnl_pct"))
+            if snap.get("deposits") is not None or snap.get("withdrawals") is not None:
+                net_capital = _num(snap.get("deposits")) - _num(snap.get("withdrawals"))
+            # recompute growth from the historical realized P&L + net capital
+            equity_growth_dollar = realized_pnl
+            equity_growth_pct = (realized_pnl / net_capital * 100.0) if net_capital else 0.0
+        else:
+            snapshot_source = "reconstructed"
+            # Fall back: scope period_pnl to the requested month using the orders proxy.
+            period_pnl = _reconstruct_month_pnl_from_orders(orders_raw, *month)
+            period_pnl_pct = (period_pnl / account_size * 100.0) if account_size else 0.0
 
     return {
         "report_period": period,
         "period_label": label,
         "period_days": days,
-        "report_month": now.strftime("%B %Y"),
+        "report_month": report_month_str,
         "generated_date": now.strftime("%B %d, %Y"),
         "account_size": account_size,
         "overall_profit": _num(pm.get("overall_pnl")),
@@ -193,6 +296,8 @@ def _performance_view(rec: dict, *, period: str, now: dt.datetime) -> dict:
         "equity_growth_pct": equity_growth_pct,
         "last_equity": last_equity,
         "open_positions_count": len(open_positions),
+        "is_historical": is_historical,
+        "snapshot_source": snapshot_source,
         "equity": _num(em.get("equity")),
         "cash": _num(em.get("cash")),
         "buying_power": _num(em.get("buying_power")),
@@ -203,5 +308,13 @@ def _performance_view(rec: dict, *, period: str, now: dt.datetime) -> dict:
     }
 
 
-def map_record(rec: dict, *, now: dt.datetime | None = None, period: str = "monthly") -> tuple[dict, dict]:
-    return _client_view(rec), _performance_view(rec, period=period, now=now or dt.datetime.now())
+def map_record(
+    rec: dict,
+    *,
+    now: dt.datetime | None = None,
+    period: str = "monthly",
+    month: tuple[int, int] | None = None,
+) -> tuple[dict, dict]:
+    return _client_view(rec), _performance_view(
+        rec, period=period, now=now or dt.datetime.now(), month=month
+    )

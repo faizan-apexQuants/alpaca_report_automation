@@ -12,9 +12,16 @@ import logging
 import os
 from typing import Any
 
+import time
+
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 log = logging.getLogger(__name__)
+
+_MAX_RETRIES = 3
+_BACKOFF_FACTOR = 2  # waits 2s, 4s, 8s between retries
 
 
 class APIError(RuntimeError):
@@ -22,7 +29,7 @@ class APIError(RuntimeError):
 
 
 class APIClient:
-    def __init__(self, base_url: str | None = None, api_key: str | None = None, timeout: float = 60.0):
+    def __init__(self, base_url: str | None = None, api_key: str | None = None, timeout: float = 180.0):
         self.base_url = (base_url or os.getenv("API_BASE_URL", "https://api.gemalgo.com/api/alpaca-open")).rstrip("/")
         self.api_key = api_key or os.getenv("API_KEY", "%$%^&)(#PS@123456@#@")
         if not self.base_url:
@@ -35,14 +42,84 @@ class APIClient:
             "Accept": "application/json",
             "User-Agent": "ApexReports/1.0",
         })
+        # Automatic retries on connection and 5xx errors
+        retry_strategy = Retry(
+            total=_MAX_RETRIES,
+            backoff_factor=_BACKOFF_FACTOR,
+            status_forcelist=[502, 503, 504],
+            allowed_methods=["GET"],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
+
+    def fetch_portfolio_history(
+        self, account_number: str, start: str, end: str
+    ) -> dict | None:
+        """Best-effort historical snapshot for a single client account.
+
+        Tries `GET {base}/portfolio-history?api_code=…&account=…&start=YYYY-MM-DD&end=YYYY-MM-DD`.
+        Returns the parsed `data` payload on success, or `None` if the endpoint
+        is missing / errored — callers must handle the `None` case.
+
+        Expected payload (flexible — we read whatever fields are present):
+            {
+              "equity_at_end":   <float>,   # account equity at `end`
+              "balance_at_end":  <float>,   # cash + positions value at `end`
+              "period_pnl":      <float>,   # realized + unrealized P&L over window
+              "period_pnl_pct":  <float>,
+              "realized_pnl":    <float>,
+              "unrealized_pnl":  <float>,
+              "deposits":        <float>,
+              "withdrawals":     <float>,
+            }
+        """
+        url = f"{self.base_url}/portfolio-history"
+        try:
+            resp = self._session.get(
+                url,
+                params={
+                    "api_code": self.api_key,
+                    "account": account_number,
+                    "start": start,
+                    "end": end,
+                },
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            log.warning("portfolio-history for %s failed: %s", account_number, exc)
+            return None
+        if resp.status_code == 404:
+            log.info("portfolio-history endpoint not available (404)")
+            return None
+        if resp.status_code >= 400:
+            log.warning("portfolio-history for %s returned HTTP %d", account_number, resp.status_code)
+            return None
+        try:
+            body = resp.json()
+        except ValueError:
+            log.warning("portfolio-history for %s returned non-JSON", account_number)
+            return None
+        if isinstance(body, dict) and body.get("status") and isinstance(body.get("data"), dict):
+            return body["data"]
+        return None
 
     def fetch_all_clients(self) -> list[dict]:
         url = f"{self.base_url}/all-clients-data"
         log.debug("GET /all-clients-data")
-        try:
-            resp = self._session.get(url, params={"api_code": self.api_key}, timeout=self.timeout)
-        except requests.RequestException as exc:
-            raise APIError(f"network error: {exc}") from exc
+        last_exc: Exception | None = None
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                resp = self._session.get(url, params={"api_code": self.api_key}, timeout=self.timeout)
+                break  # success
+            except requests.RequestException as exc:
+                last_exc = exc
+                if attempt < _MAX_RETRIES:
+                    wait = _BACKOFF_FACTOR ** attempt
+                    log.warning("attempt %d/%d failed (%s), retrying in %ds…", attempt, _MAX_RETRIES, exc, wait)
+                    time.sleep(wait)
+                else:
+                    raise APIError(f"network error after {_MAX_RETRIES} attempts: {exc}") from exc
         if resp.status_code >= 400:
             raise APIError(f"all-clients-data returned HTTP {resp.status_code}")
         try:

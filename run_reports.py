@@ -46,13 +46,36 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Reporting period (default: monthly). 3months has no API P&L value — KPI shows '—'.",
     )
     p.add_argument("--output-dir", help="Override output dir (default: $OUTPUT_DIR or ./out)")
+    p.add_argument(
+        "--month",
+        help=(
+            "Generate a historical monthly report for the given YYYY-MM (e.g. 2025-04). "
+            "Only valid with --period monthly. Order log and net-notional chart are scoped "
+            "to that calendar month; KPI cards still reflect current account state "
+            "(the API does not expose historical snapshots)."
+        ),
+    )
     return p.parse_args(argv)
+
+
+def _parse_month(s: str | None) -> tuple[int, int] | None:
+    if not s:
+        return None
+    try:
+        d = dt.datetime.strptime(s, "%Y-%m")
+    except ValueError as exc:
+        raise SystemExit(f"--month must be YYYY-MM (got {s!r}): {exc}")
+    return d.year, d.month
 
 
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     _setup_logging()
     args = _parse_args(argv)
+    month = _parse_month(args.month)
+    if month is not None and args.period != "monthly":
+        log.error("--month is only valid with --period monthly (got --period %s)", args.period)
+        return 2
 
     output_root = Path(args.output_dir or os.getenv("OUTPUT_DIR") or "./out").resolve()
     per_client_dir = output_root / "clients"
@@ -70,8 +93,32 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     now = dt.datetime.now()
-    ym = now.strftime("%Y_%m")
-    subject_month = now.strftime("%B %Y")
+    if month is not None:
+        ym = f"{month[0]:04d}_{month[1]:02d}"
+        subject_month = dt.datetime(month[0], month[1], 1).strftime("%B %Y")
+        # Best-effort: attach a point-in-time portfolio snapshot to each client record.
+        # If the endpoint isn't available we proceed without it; data_mapper degrades
+        # gracefully (period_pnl reconstructed from orders, KPIs marked as current).
+        api = api_client.APIClient()
+        start_dt, end_dt = data_mapper._month_window(*month)
+        start_iso = start_dt.date().isoformat()
+        end_iso = end_dt.date().isoformat()
+        hit = miss = 0
+        for raw in raw_records:
+            acct = ((raw.get("account_mapping") or {}).get("account_number") or "").strip()
+            if not acct:
+                miss += 1
+                continue
+            snap = api.fetch_portfolio_history(acct, start_iso, end_iso)
+            if snap:
+                raw["_historical_snapshot"] = snap
+                hit += 1
+            else:
+                miss += 1
+        log.info("historical snapshot: %d hits, %d misses (reconstructing from orders)", hit, miss)
+    else:
+        ym = now.strftime("%Y_%m")
+        subject_month = now.strftime("%B %Y")
     merged_pdf = output_root / f"all_clients_report_{ym}_{args.period}.pdf"
 
     merge_entries: list[tuple[str, Path]] = []
@@ -80,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     with pdf_generator.browser_session() as browser:
         for idx, raw in enumerate(tqdm(raw_records, desc="rendering", unit="client"), start=1):
             try:
-                client, perf = data_mapper.map_record(raw, now=now, period=args.period)
+                client, perf = data_mapper.map_record(raw, now=now, period=args.period, month=month)
             except Exception as exc:  # noqa: BLE001
                 cid = (raw.get("customer_profile") or {}).get("id", "?")
                 log.error("client %s mapping failed: %s", cid, exc)
