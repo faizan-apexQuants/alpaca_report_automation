@@ -203,6 +203,12 @@ td.down { color: var(--red); font-weight: 700; }
     <span>Risk: <b>{{ client.risk_level or '—' }}</b></span><span class="sep"></span>
     <span>Platform: <b>{{ client.platform }}</b></span>
     {% if client.is_paper %}<span class="pill paper" style="margin-left:2px">Paper</span>{% endif %}
+    {% if perf.is_historical %}
+      <span class="pill paper" style="margin-left:2px"
+        title="{% if perf.snapshot_source == 'api' %}KPIs reflect point-in-time snapshot from portfolio-history{% else %}Period P&L reconstructed from order log; other KPIs reflect current account state{% endif %}">
+        Historical · {{ perf.report_month }}{% if perf.snapshot_source == 'reconstructed' %} (reconstructed){% endif %}
+      </span>
+    {% endif %}
     <span class="sep"></span>
     <span>Open positions: <b>{{ perf.open_positions_count }}</b></span>
   </div>
@@ -236,22 +242,12 @@ td.down { color: var(--red); font-weight: 700; }
     <div class="kpi {{ 'up' if perf.equity_growth_dollar >= 0 else 'down' }}">
       <div class="label">Growth</div>
       <div class="value {{ 'up' if perf.equity_growth_dollar >= 0 else 'down' }}">{{ fmt_pct_signed(perf.equity_growth_pct) }}</div>
-      <div class="sub">{{ fmt_money_signed(perf.equity_growth_dollar) }} vs last close</div>
+      <div class="sub">{{ fmt_money_signed(perf.equity_growth_dollar) }} realized</div>
     </div>
   </div>
 
   <div class="section">
-    {% if perf.report_period == 'all' and perf.monthly_returns %}
-    <div class="card chart-card" style="height: 48mm;">
-      <div class="card-head">
-        <div class="title">Average Monthly Return</div>
-        <div class="total" style="color: var(--primary);">{{ perf.monthly_returns|length }} months</div>
-      </div>
-      <div class="chart-wrap">{{ monthly_returns_svg | safe }}</div>
-    </div>
-    {% endif %}
-
-    <div class="card chart-card"{% if perf.report_period == 'all' and perf.monthly_returns %} style="height: 50mm;"{% endif %}>
+    <div class="card chart-card">
       <div class="card-head">
         <div class="title">Open Positions — Floating P&amp;L by Ticker</div>
         <div class="total" style="color: {{ 'var(--green)' if perf.floating_pnl >= 0 else 'var(--red)' }};">{{ fmt_money_signed(perf.floating_pnl) }}</div>
@@ -314,19 +310,6 @@ td.down { color: var(--red); font-weight: 700; }
   </div>
 
   <div class="section">
-    <div class="card chart-card">
-      <div class="card-head">
-        <div class="title">Closed Trades — Net Notional by Ticker · {{ perf.period_label }}</div>
-        <div class="total" style="color: var(--primary);">{{ fmt_money(orders_notional_total) }}</div>
-      </div>
-      <div class="badges">
-        <span class="badge primary">{{ perf.recent_orders|length }} Orders</span>
-        <span class="badge up">{{ buy_count }} Buys</span>
-        <span class="badge down">{{ sell_count }} Sells</span>
-      </div>
-      <div class="chart-wrap">{{ orders_chart_svg | safe }}</div>
-    </div>
-
     <div class="card table-card">
       <div class="card-head">
         <div class="title">Closed Trade Log · {{ perf.period_label }}</div>

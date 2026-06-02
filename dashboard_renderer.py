@@ -48,90 +48,6 @@ def _empty_svg(width: int, height: int, msg: str) -> str:
     )
 
 
-def _svg_orders_by_ticker(orders: list[dict], width: int = 720, height: int = 280) -> str:
-    """Vertical bars: net signed notional per ticker (buys + / sells -)."""
-    if not orders:
-        return _empty_svg(width, height, "No recent orders")
-    agg: dict[str, float] = {}
-    for o in orders:
-        sign = 1.0 if o.get("side") == "buy" else -1.0
-        agg[o["ticker"]] = agg.get(o["ticker"], 0.0) + sign * float(o.get("notional", 0.0))
-    # cap visible bars by absolute notional so dense histories stay legible; bucket the rest as "Others".
-    MAX_BARS = 22
-    sorted_by_abs = sorted(agg.items(), key=lambda kv: abs(kv[1]), reverse=True)
-    if len(sorted_by_abs) > MAX_BARS:
-        kept = sorted_by_abs[:MAX_BARS - 1]
-        others_sum = sum(v for _, v in sorted_by_abs[MAX_BARS - 1:])
-        kept.append(("Others", others_sum))
-        items = sorted(kept, key=lambda kv: kv[1], reverse=True)
-    else:
-        items = sorted(sorted_by_abs, key=lambda kv: kv[1], reverse=True)
-
-    max_abs = max((abs(v) for _, v in items), default=0.0)
-    axis_label_w = max(8, len(fmt_k(max_abs))) * 6 + 10
-    n = len(items)
-    # pad_b grows when ticker labels need to rotate so they don't get clipped.
-    rotate_tickers = n > 12
-    pad_b = 56 if rotate_tickers else 38
-    pad_l, pad_r, pad_t = max(36, axis_label_w), 14, 26
-    iw = width - pad_l - pad_r
-    ih = height - pad_t - pad_b
-    bar_w = (iw / n) * 0.78
-    gap = (iw / n) * 0.22
-    hi = max((v for _, v in items), default=0.0); hi = max(hi, 0.0)
-    lo = min((v for _, v in items), default=0.0); lo = min(lo, 0.0)
-    if hi > 0: hi *= 1.18
-    if lo < 0: lo *= 1.18
-    span = (hi - lo) or 1.0
-    # bar value labels: only draw when there's horizontal room; shrink to fit.
-    label_font = max(7.0, min(12.0, bar_w * 0.60))
-    show_value_labels = bar_w >= 14
-    ticker_font = max(7.0, min(11.5, bar_w * 0.85 if rotate_tickers else bar_w * 0.55))
-
-    def y_of(v: float) -> float:
-        return pad_t + ih * (1 - (v - lo) / span)
-    zero_y = y_of(0)
-
-    grid = []
-    for i in range(5):
-        gv = lo + span * i / 4
-        gy = y_of(gv)
-        grid.append(f'<line class="grid-line" x1="{pad_l}" x2="{pad_l+iw}" y1="{gy}" y2="{gy}"/>')
-        grid.append(f'<text class="axis-label" x="{pad_l-6}" y="{gy+3}" text-anchor="end">{fmt_k(gv)}</text>')
-
-    bars, labels, vals = [], [], []
-    for i, (ticker, v) in enumerate(items):
-        x = pad_l + gap/2 + i * (bar_w + gap)
-        y = y_of(v) if v >= 0 else zero_y
-        h = abs(y_of(v) - zero_y)
-        cls = "bar-up" if v >= 0 else "bar-down"
-        bars.append(f'<rect class="{cls}" x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h:.1f}" rx="2"/>')
-        cx = x + bar_w / 2
-        if rotate_tickers:
-            ty = pad_t + ih + 10
-            labels.append(
-                f'<text class="axis-label" x="{cx:.1f}" y="{ty:.1f}" text-anchor="end" '
-                f'font-size="{ticker_font:.1f}" transform="rotate(-45 {cx:.1f} {ty:.1f})">{html.escape(ticker)}</text>'
-            )
-        else:
-            labels.append(
-                f'<text class="axis-label" x="{cx:.1f}" y="{pad_t+ih+14}" '
-                f'text-anchor="middle" font-size="{ticker_font:.1f}">{html.escape(ticker)}</text>'
-            )
-        if show_value_labels:
-            ly = y - 4 if v >= 0 else y + h + label_font
-            vals.append(
-                f'<text class="bar-label" x="{cx:.1f}" y="{ly:.1f}" text-anchor="middle" '
-                f'font-size="{label_font:.1f}">{fmt_k(v)}</text>'
-            )
-
-    return f'''<svg viewBox="0 0 {width} {height}" width="100%" preserveAspectRatio="none">
-      {''.join(grid)}
-      <line class="axis-line" x1="{pad_l}" x2="{pad_l+iw}" y1="{zero_y}" y2="{zero_y}"/>
-      {''.join(bars)}{''.join(vals)}{''.join(labels)}
-    </svg>'''
-
-
 def _svg_open_positions(positions: list[dict], width: int = 720, height: int = 280) -> str:
     if not positions:
         return _empty_svg(width, height, "No open positions")
@@ -220,7 +136,6 @@ def render(client: dict, performance: dict, *, theme: str = "purple", page_num: 
         "orders_notional_total": orders_notional_total,
         "open_gaining": open_gaining,
         "open_losing": open_losing,
-        "orders_chart_svg": _svg_orders_by_ticker(orders),
         "open_chart_svg": _svg_open_positions(positions),
         "fmt_money": fmt_money,
         "fmt_money_signed": fmt_money_signed,
