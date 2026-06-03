@@ -88,20 +88,6 @@ def _client_view(rec: dict) -> dict:
     }
 
 
-def _overall_pnl(pm: dict) -> tuple[float, float]:
-    """Compute lifetime P&L and ROI %, deposit/withdrawal-safe.
-
-        Net Capital     = Total Deposits − Total Withdrawals
-        Overall P&L     = Current Equity − Net Capital
-        Overall ROI %   = Overall P&L ÷ Net Capital × 100   (0 if net capital == 0)
-    """
-    current_equity = _num(pm.get("total_equity") or pm.get("balance") or pm.get("current_balance"))
-    net_capital = _num(pm.get("total_deposits")) - _num(pm.get("total_withdrawals"))
-    overall_pnl = current_equity - net_capital
-    overall_roi_pct = (overall_pnl / net_capital * 100.0) if net_capital else 0.0
-    return overall_pnl, overall_roi_pct
-
-
 def _select_period_pnl(period: str, pm: dict, pct: dict) -> tuple[float | None, float | None]:
     """Return (period_pnl, period_pnl_pct). `None` for periods the API does not expose."""
     if period == "daily":
@@ -111,7 +97,7 @@ def _select_period_pnl(period: str, pm: dict, pct: dict) -> tuple[float | None, 
     if period == "monthly":
         return _num(pm.get("monthly_pnl")), _num(pct.get("monthly"))
     if period == "all":
-        return _overall_pnl(pm)
+        return _num(pm.get("overall_pnl")), _num(pct.get("overall") or pm.get("overall_roi_pct"))
     # 3months — not exposed by API
     return None, None
 
@@ -294,8 +280,8 @@ def _performance_view(
         "report_month": report_month_str,
         "generated_date": now.strftime("%B %d, %Y"),
         "account_size": account_size,
-        "overall_profit": _overall_pnl(pm)[0],
-        "overall_roi_pct": _overall_pnl(pm)[1],
+        "overall_profit": _num(pm.get("overall_pnl")),
+        "overall_roi_pct": _num(pct.get("overall") or pm.get("overall_roi_pct")),
         "period_pnl": period_pnl,
         "period_pnl_pct": period_pnl_pct,
         "monthly_pnl": _num(pm.get("monthly_pnl")),
