@@ -24,6 +24,8 @@ Output `performance`:
       weekly_pnl,  weekly_pnl_pct,
       today_pnl,   today_pnl_pct,
       floating_pnl, floating_pnl_pct,
+      realized_pnl, total_trades,
+      total_deposits, total_withdrawals,
       open_positions_count,
       equity, cash, buying_power, long_market_value, short_market_value,
       open_positions: [...],                  # current state — period-independent
@@ -208,7 +210,7 @@ def _performance_view(
     positions_raw = fs.get("current_positions") or []
     orders_raw = (rec.get("trading_history") or {}).get("recent_orders") or []
 
-    account_size = _num(pm.get("balance") or pm.get("current_balance"))
+    account_size = _num(pm.get("total_balance") or pm.get("current_balance"))
 
     open_positions = []
     for p in positions_raw:
@@ -223,15 +225,25 @@ def _performance_view(
             "floating_dollar": floating,
         })
     floating_total = sum(p["floating_dollar"] for p in open_positions)
+    # Prefer unrealized_pnl from performance_metrics when no open positions
+    # provide a computed total (e.g. positions list may be empty but the API
+    # still reports an aggregate unrealized figure).
+    if not open_positions and pm.get("unrealized_pnl") is not None:
+        floating_total = _num(pm.get("unrealized_pnl"))
     floating_total_pct = (floating_total / account_size * 100.0) if account_size else 0.0
 
     # Growth = realized return on the capital the client has actually committed.
     #   Net Capital = Total Deposits − Total Withdrawals
     #   Growth %    = Realized P&L ÷ Net Capital × 100
-    equity_val = _num(em.get("equity"))
-    last_equity = _num(em.get("last_equity"))
+    # Prefer performance_metrics values, fall back to equity_metrics.
+    equity_val = _num(pm.get("total_equity") or em.get("total_equity"))
+    last_equity = _num(pm.get("last_equity") or em.get("last_equity"))
+    cash_val = _num(pm.get("cash") or em.get("cash"))
     realized_pnl = _num(pm.get("realized_pnl"))
-    net_capital = _num(pm.get("total_deposits")) - _num(pm.get("total_withdrawals"))
+    total_deposits = _num(pm.get("total_deposits"))
+    total_withdrawals = _num(pm.get("total_withdrawals"))
+    total_trades = _int(pm.get("total_trades"))
+    net_capital = total_deposits - total_withdrawals
     equity_growth_dollar = realized_pnl
     equity_growth_pct = (realized_pnl / net_capital * 100.0) if net_capital else 0.0
 
@@ -295,14 +307,18 @@ def _performance_view(
         "equity_growth_dollar": equity_growth_dollar,
         "equity_growth_pct": equity_growth_pct,
         "last_equity": last_equity,
+        "realized_pnl": realized_pnl,
+        "total_trades": total_trades,
+        "total_deposits": total_deposits,
+        "total_withdrawals": total_withdrawals,
         "open_positions_count": len(open_positions),
         "is_historical": is_historical,
         "snapshot_source": snapshot_source,
-        "equity": _num(em.get("equity")),
-        "cash": _num(em.get("cash")),
-        "buying_power": _num(em.get("buying_power")),
-        "long_market_value": _num(em.get("long_market_value")),
-        "short_market_value": _num(em.get("short_market_value")),
+        "equity": equity_val,
+        "cash": cash_val,
+        "buying_power": _num(pm.get("buying_power") or em.get("buying_power")),
+        "long_market_value": _num(pm.get("long_market_value") or em.get("long_market_value")),
+        "short_market_value": _num(pm.get("short_market_value") or em.get("short_market_value")),
         "open_positions": open_positions,
         "recent_orders": recent_orders,
     }
