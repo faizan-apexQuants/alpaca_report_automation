@@ -36,7 +36,13 @@ def _setup_logging() -> None:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate and email monthly client trading reports")
-    p.add_argument("--client-id", help="Only run for this client (testing)")
+    client_grp = p.add_mutually_exclusive_group()
+    client_grp.add_argument("--client-id", help="Only run for this client ID (must know the ID)")
+    client_grp.add_argument(
+        "--client",
+        metavar="NAME",
+        help="Generate report for a single client by name (case-insensitive substring match)",
+    )
     p.add_argument("--no-email", action="store_true", help="Skip email send; PDF stays on disk")
     p.add_argument("--theme", choices=["purple", "yellow"], default="purple")
     p.add_argument(
@@ -56,6 +62,43 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     return p.parse_args(argv)
+
+
+def _client_name(rec: dict) -> str:
+    """Extract the display name from a raw API record."""
+    cp = rec.get("customer_profile") or {}
+    first = cp.get("first_name") or ""
+    last = cp.get("last_name") or ""
+    return f"{first} {last}".strip() or cp.get("username") or cp.get("email") or str(cp.get("id", "?"))
+
+
+def _resolve_client_name(records: list[dict], query: str) -> str | None:
+    """Find a single client ID by case-insensitive substring match on name.
+
+    Returns the client-id string, or None (and prints diagnostics) on
+    zero / ambiguous matches.
+    """
+    q = query.lower()
+    matches: list[tuple[str, str]] = []
+    for rec in records:
+        cp = rec.get("customer_profile") or {}
+        cid = str(cp.get("id") or cp.get("username") or "?")
+        name = _client_name(rec)
+        if q in name.lower():
+            matches.append((cid, name))
+
+    if len(matches) == 1:
+        cid, name = matches[0]
+        log.info("matched client: %s (ID %s)", name, cid)
+        return cid
+    if len(matches) == 0:
+        log.error("no client name matches '%s'", query)
+        return None
+    # Multiple matches — list them so the user can refine
+    log.error("'%s' matched %d clients — be more specific:", query, len(matches))
+    for cid, name in sorted(matches, key=lambda e: e[1].lower()):
+        print(f"  ID {cid:>5}  {name}")
+    return None
 
 
 def _parse_month(s: str | None) -> tuple[int, int] | None:
@@ -81,9 +124,27 @@ def main(argv: list[str] | None = None) -> int:
     per_client_dir = output_root / "clients"
     per_client_dir.mkdir(parents=True, exist_ok=True)
 
-    log.info("fetching clients%s", f" (filter: {args.client_id})" if args.client_id else "")
+    client_filter = args.client_id
+
+    # --client NAME: fetch all, resolve name → ID, then filter.
+    if args.client:
+        log.info("fetching clients to resolve name '%s'", args.client)
+        try:
+            all_records, _ = api_client.fetch_all(client_filter=None)
+        except api_client.APIError as exc:
+            log.error("aborting: %s", exc)
+            return 2
+        if not all_records:
+            log.error("no clients available")
+            return 2
+        resolved = _resolve_client_name(all_records, args.client)
+        if resolved is None:
+            return 2
+        client_filter = resolved
+
+    log.info("fetching clients%s", f" (filter: {client_filter})" if client_filter else "")
     try:
-        raw_records, skipped = api_client.fetch_all(client_filter=args.client_id)
+        raw_records, skipped = api_client.fetch_all(client_filter=client_filter)
     except api_client.APIError as exc:
         log.error("aborting: %s", exc)
         return 2

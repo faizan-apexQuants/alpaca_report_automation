@@ -219,9 +219,9 @@ td.down { color: var(--red); font-weight: 700; }
       <div class="value accent">{{ fmt_money(perf.account_size) }}</div>
       <div class="sub">Equity {{ fmt_money(perf.equity) }} · Cash {{ fmt_money(perf.cash) }}</div>
     </div>
-    <div class="kpi {{ 'up' if perf.overall_profit >= 0 else 'down' }}">
+    <div class="kpi {{ 'up' if perf.realized_pnl >= 0 else 'down' }}">
       <div class="label">Overall P&amp;L</div>
-      <div class="value {{ 'up' if perf.overall_profit >= 0 else 'down' }}">{{ fmt_money_signed(perf.overall_profit) }}</div>
+      <div class="value {{ 'up' if perf.realized_pnl >= 0 else 'down' }}">{{ fmt_money_signed(perf.realized_pnl) }}</div>
       <div class="sub">{{ fmt_pct_signed(perf.overall_roi_pct) }} ROI · {{ perf.total_trades }} trades</div>
     </div>
     <div class="kpi {{ 'up' if (perf.period_pnl or 0) >= 0 else 'down' }}">
