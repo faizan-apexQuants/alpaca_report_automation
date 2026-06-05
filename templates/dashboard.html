@@ -231,7 +231,11 @@ td.down { color: var(--red); font-weight: 700; }
       <div class="sub">Not exposed by API</div>
       {% else %}
       <div class="value {{ 'up' if perf.period_pnl >= 0 else 'down' }}">{{ fmt_money_signed(perf.period_pnl) }}</div>
+      {% if perf.report_period == 'all' %}
+      <div class="sub">{{ fmt_pct_signed(perf.period_pnl_pct) }} · Realized {{ fmt_money_signed(perf.realized_pnl) }}</div>
+      {% else %}
       <div class="sub">{{ fmt_pct_signed(perf.period_pnl_pct) }} over period</div>
+      {% endif %}
       {% endif %}
     </div>
     <div class="kpi {{ 'up' if perf.floating_pnl >= 0 else 'down' }}">

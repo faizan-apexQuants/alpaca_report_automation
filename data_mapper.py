@@ -99,7 +99,7 @@ def _select_period_pnl(period: str, pm: dict, pct: dict) -> tuple[float | None, 
     if period == "monthly":
         return _num(pm.get("monthly_pnl")), _num(pct.get("monthly"))
     if period == "all":
-        return _num(pm.get("overall_pnl")), _num(pct.get("overall") or pm.get("overall_roi_pct"))
+        return _num(pm.get("realized_pnl")), _num(pct.get("overall") or pm.get("overall_roi_pct"))
     # 3months — not exposed by API
     return None, None
 

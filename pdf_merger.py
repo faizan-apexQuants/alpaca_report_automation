@@ -1,6 +1,7 @@
 """Merge per-client PDFs into one master PDF with bookmarks."""
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from pathlib import Path
 
@@ -31,7 +32,18 @@ def merge_pdfs(entries: list[tuple[str, Path]], output_path: Path) -> Path:
             log.debug("merge: bookmark add failed for %s: %s", title, exc)
 
     if output_path.exists():
-        output_path.unlink()
+        try:
+            output_path.unlink()
+        except PermissionError:
+            # File is locked (e.g. open in a PDF viewer) — write to a
+            # timestamped fallback so the run doesn't fail.
+            stamp = dt.datetime.now().strftime("%H%M%S")
+            fallback = output_path.with_stem(f"{output_path.stem}_{stamp}")
+            log.warning(
+                "merge: %s is locked by another process, writing to %s instead",
+                output_path.name, fallback.name,
+            )
+            output_path = fallback
     with output_path.open("wb") as fh:
         writer.write(fh)
     return output_path
