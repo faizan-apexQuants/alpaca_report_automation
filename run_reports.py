@@ -1,4 +1,4 @@
-"""Orchestrator: fetch → map → render → PDF → merge → email."""
+"""Orchestrator: fetch → map → render → PDF → merge."""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +15,6 @@ from tqdm import tqdm
 import api_client
 import dashboard_renderer
 import data_mapper
-import email_sender
 import pdf_generator
 import pdf_merger
 
@@ -35,7 +34,7 @@ def _setup_logging() -> None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Generate and email monthly client trading reports")
+    p = argparse.ArgumentParser(description="Generate monthly client trading reports")
     client_grp = p.add_mutually_exclusive_group()
     client_grp.add_argument("--client-id", help="Only run for this client ID (must know the ID)")
     client_grp.add_argument(
@@ -43,23 +42,35 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="NAME",
         help="Generate report for a single client by name (case-insensitive substring match)",
     )
-    p.add_argument("--no-email", action="store_true", help="Skip email send; PDF stays on disk")
     p.add_argument("--theme", choices=["purple", "yellow"], default="purple")
     p.add_argument(
         "--period",
-        choices=["daily", "weekly", "monthly", "3months", "all"],
+        choices=["daily", "weekly", "monthly", "last-month", "all", "custom"],
         default="monthly",
-        help="Reporting period (default: monthly). 3months has no API P&L value — KPI shows '—'.",
+        help=(
+            "Reporting period (default: monthly = last 30 days). "
+            "Use 'last-month' for the previous full calendar month, "
+            "'all' for lifetime, "
+            "'custom' with --from/--to YYYY-MM-DD for an arbitrary range."
+        ),
     )
     p.add_argument("--output-dir", help="Override output dir (default: $OUTPUT_DIR or ./out)")
     p.add_argument(
         "--month",
         help=(
-            "Generate a historical monthly report for the given YYYY-MM (e.g. 2025-04). "
-            "Only valid with --period monthly. Order log and net-notional chart are scoped "
-            "to that calendar month; KPI cards still reflect current account state "
-            "(the API does not expose historical snapshots)."
+            "Historical monthly report for YYYY-MM (e.g. 2025-04). "
+            "Only valid with --period monthly. Order log is scoped to that calendar month."
         ),
+    )
+    p.add_argument(
+        "--from",
+        dest="date_from",
+        help="Custom range start (YYYY-MM-DD). Required with --period custom.",
+    )
+    p.add_argument(
+        "--to",
+        dest="date_to",
+        help="Custom range end (YYYY-MM-DD, inclusive). Required with --period custom.",
     )
     return p.parse_args(argv)
 
@@ -111,6 +122,28 @@ def _parse_month(s: str | None) -> tuple[int, int] | None:
     return d.year, d.month
 
 
+def _parse_date(s: str, flag: str) -> dt.datetime:
+    try:
+        d = dt.datetime.strptime(s, "%Y-%m-%d")
+    except ValueError as exc:
+        raise SystemExit(f"{flag} must be YYYY-MM-DD (got {s!r}): {exc}")
+    return d.replace(tzinfo=dt.timezone.utc)
+
+
+def _resolve_custom_window(args: argparse.Namespace) -> tuple[dt.datetime, dt.datetime] | None:
+    if args.period != "custom":
+        if args.date_from or args.date_to:
+            raise SystemExit("--from / --to are only valid with --period custom")
+        return None
+    if not args.date_from or not args.date_to:
+        raise SystemExit("--period custom requires both --from and --to (YYYY-MM-DD)")
+    start = _parse_date(args.date_from, "--from")
+    end = _parse_date(args.date_to, "--to").replace(hour=23, minute=59, second=59, microsecond=999999)
+    if start > end:
+        raise SystemExit(f"--from ({args.date_from}) must be on or before --to ({args.date_to})")
+    return start, end
+
+
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     _setup_logging()
@@ -119,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     if month is not None and args.period != "monthly":
         log.error("--month is only valid with --period monthly (got --period %s)", args.period)
         return 2
+    custom_window = _resolve_custom_window(args)
 
     output_root = Path(args.output_dir or os.getenv("OUTPUT_DIR") or "./out").resolve()
     per_client_dir = output_root / "clients"
@@ -154,7 +188,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     now = dt.datetime.now()
-    if month is not None:
+    if args.period == "custom" and custom_window is not None:
+        s, e = custom_window
+        ym = f"{s:%Y%m%d}-{e:%Y%m%d}"
+        subject_month = f"{s.strftime('%b %d, %Y')} – {e.strftime('%b %d, %Y')}"
+    elif args.period == "last-month":
+        prev_month, _ = data_mapper._previous_month_window(now)
+        ym = f"{prev_month[0]:04d}_{prev_month[1]:02d}"
+        subject_month = dt.datetime(prev_month[0], prev_month[1], 1).strftime("%B %Y")
+    elif month is not None:
         ym = f"{month[0]:04d}_{month[1]:02d}"
         subject_month = dt.datetime(month[0], month[1], 1).strftime("%B %Y")
         # Best-effort: attach a point-in-time portfolio snapshot to each client record.
@@ -188,7 +230,9 @@ def main(argv: list[str] | None = None) -> int:
     with pdf_generator.browser_session() as browser:
         for idx, raw in enumerate(tqdm(raw_records, desc="rendering", unit="client"), start=1):
             try:
-                client, perf = data_mapper.map_record(raw, now=now, period=args.period, month=month)
+                client, perf = data_mapper.map_record(
+                    raw, now=now, period=args.period, month=month, custom_window=custom_window,
+                )
             except Exception as exc:  # noqa: BLE001
                 cid = (raw.get("customer_profile") or {}).get("id", "?")
                 log.error("client %s mapping failed: %s", cid, exc)
@@ -215,30 +259,6 @@ def main(argv: list[str] | None = None) -> int:
     pdf_merger.merge_pdfs(merge_entries, merged_pdf)
     size_kb = merged_pdf.stat().st_size / 1024
 
-    if args.no_email:
-        email_status = "skipped (--no-email)"
-    else:
-        skipped_lines = "\n".join(f"  - {cid}: {reason}" for cid, reason in skipped) or "  (none)"
-        period_label = data_mapper.PERIODS[args.period][0]
-        body = (
-            f"{period_label} trading performance reports generated {subject_month}.\n\n"
-            f"Reporting period: {period_label}\n"
-            f"Clients included: {len(merge_entries)}\n"
-            f"File size: {size_kb:,.1f} KB\n"
-            f"Attachment: {merged_pdf.name}\n\n"
-            f"Skipped clients:\n{skipped_lines}\n"
-        )
-        try:
-            email_sender.send_report(
-                merged_pdf,
-                subject=f"Client Performance Reports ({period_label}) — {subject_month}",
-                body=body,
-            )
-            email_status = "sent"
-        except Exception as exc:  # noqa: BLE001
-            log.error("email send failed: %s", exc)
-            email_status = f"FAILED: {exc}"
-
     print()
     print("=" * 64)
     print(f"Period:     {data_mapper.PERIODS[args.period][0]} ({args.period})")
@@ -248,7 +268,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  - {cid}: {reason}")
     print(f"Output:     {merged_pdf}")
     print(f"Size:       {size_kb:,.1f} KB")
-    print(f"Email:      {email_status}")
     print("=" * 64)
     return 0
 

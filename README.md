@@ -1,11 +1,11 @@
-# Apex Reports — Monthly Client Performance Pipeline
+# Apex Reports — Client Performance Pipeline
 
 Pulls every client from the GemAlgo Alpaca-open endpoint, renders a personalised
-single-page HTML dashboard per client, converts each one to an A4-landscape PDF
-with Playwright, merges them into one master PDF with bookmarks, and emails it.
+two-page HTML dashboard per client, converts each one to an A4-portrait PDF
+with Playwright, and merges them into one master PDF with bookmarks.
 
 ```
-all-clients-data → map → render HTML → PDF (Playwright) → merge (pypdf) → SMTP
+all-clients-data → map → render HTML → PDF (Playwright) → merge (pypdf)
 ```
 
 ## API
@@ -25,7 +25,6 @@ view-model the template renders.
 ## Prerequisites
 
 - Python **3.11+**
-- An SMTP account (Gmail app-password, Postmark, SES, etc.)
 
 Install:
 
@@ -42,27 +41,22 @@ Copy `.env.example` to `.env` and fill in:
 | --------------- | ---------------------------------------------------------------- |
 | `API_BASE_URL`  | `https://api.gemalgo.com/api/alpaca-open` (no trailing slash)    |
 | `API_KEY`       | Passed as `?api_code=` to the endpoint                           |
-| `SMTP_HOST`     | SMTP server host                                                 |
-| `SMTP_PORT`     | `465` (SSL) or `587` (STARTTLS)                                  |
-| `SMTP_USER`     | SMTP username                                                    |
-| `SMTP_PASS`     | SMTP password / app-password                                     |
-| `SMTP_USE_TLS`  | `true` (default) — STARTTLS for port 587                         |
-| `EMAIL_FROM`    | From address shown on the message                                |
-| `EMAIL_TO`      | Recipient of the merged report                                   |
 | `OUTPUT_DIR`    | Where per-client and merged PDFs are written (`./out`)           |
 
 ## Running
 
 ```bash
-python run_reports.py                            # default: monthly
-python run_reports.py --period daily             # last 1 day
-python run_reports.py --period weekly            # last 7 days
-python run_reports.py --period monthly           # last 30 days
-python run_reports.py --period 3months           # last 90 days  (KPI P&L shows '—' — not in API)
-python run_reports.py --period all               # lifetime / since inception
-python run_reports.py --client-id 29             # one client (testing)
-python run_reports.py --no-email                 # produce PDF only
-python run_reports.py --theme yellow             # alternate theme
+python run_reports.py                                       # default: monthly (last 30 days)
+python run_reports.py --period daily                        # last 1 day
+python run_reports.py --period weekly                       # last 7 days
+python run_reports.py --period monthly                      # last 30 days
+python run_reports.py --period last-month                   # previous full calendar month
+python run_reports.py --period all                          # lifetime / since inception
+python run_reports.py --period custom --from 2026-03-01 --to 2026-05-31
+python run_reports.py --period monthly --month 2025-04      # specific past month
+python run_reports.py --client-id 29                        # one client (testing)
+python run_reports.py --client "Smith"                      # one client by name (substring)
+python run_reports.py --theme yellow                        # alternate theme
 python run_reports.py --output-dir ./out/2026-05
 ```
 
@@ -70,18 +64,19 @@ The `--client-id` value is the `customer_profile.id` from the API payload.
 
 ### Reporting periods
 
-| `--period` | Window     | KPI P&L source                              |
-| ---------- | ---------- | ------------------------------------------- |
-| `daily`    | 1 day      | `performance_metrics.today_pnl`             |
-| `weekly`   | 7 days     | `performance_metrics.weekly_pnl`            |
-| `monthly`  | 30 days    | `performance_metrics.monthly_pnl` (default) |
-| `3months`  | 90 days    | not exposed by API — KPI shows `—`          |
-| `all`      | lifetime   | `performance_metrics.overall_profit`        |
+| `--period`    | Window                          | P&L source                                              |
+| ------------- | ------------------------------- | ------------------------------------------------------- |
+| `daily`       | last 1 day                      | `performance_metrics.today_pnl`                         |
+| `weekly`      | last 7 days                     | `performance_metrics.weekly_pnl`                        |
+| `monthly`     | last 30 days *(default)*        | `performance_metrics.monthly_pnl`                       |
+| `last-month`  | previous full calendar month    | FIFO-matched realized P&L over the window               |
+| `all`         | lifetime                        | `current_equity − (total_deposits − total_withdrawals)` |
+| `custom`      | `[--from, --to]` inclusive      | FIFO-matched realized P&L over the window               |
 
-In every case the **orders log + orders chart** is filtered to the selected
-window using `recent_orders[*].created_at`. Open positions are point-in-time
-state, so they are shown as-is regardless of period. Output filenames include
-the period (e.g. `all_clients_report_2026_05_weekly.pdf`) so different periods
+For every period the **closed trade log** is filtered to the selected window
+using `recent_orders[*].created_at`. Open positions are point-in-time state,
+so they are shown as-is regardless of period. Output filenames include the
+period (e.g. `all_clients_report_2026_05_monthly.pdf`) so different periods
 co-exist on disk.
 
 Outputs:
@@ -89,28 +84,25 @@ Outputs:
 ```
 <OUTPUT_DIR>/
 ├── clients/
-│   ├── 29_softholding.pdf
+│   ├── 29_softholding_monthly.pdf
 │   └── …
-└── all_clients_report_2026_05.pdf      ← emailed
+└── all_clients_report_2026_05_monthly.pdf
 ```
 
 The merged PDF has one bookmark per client for fast navigation.
 
 ## What the dashboard shows
 
-* **KPI row** (5 cards): Account Balance · Overall P&L · Monthly P&L · Floating
-  P&L · Open Positions. Each KPI is colour-coded green/red by sign and large
-  enough for older audiences (target users are 60+).
-* **Charts**: net signed notional of recent orders by ticker; floating P&L by
-  open position (horizontal).
-* **Tables**: recent orders log (ticker, side, time, qty, price, notional,
-  status); open position detail (ticker, qty, current price, market value,
-  floating % and $).
-
-Closed-trade entry/exit pairing is **not** rendered because the API does not
-expose paired buy/sell records — only an order/activity stream. If a closed-
-trade endpoint is added later, the renderer is structured to plug it in
-without template changes.
+* **Page 1 — KPI row** (5 cards): Account Balance · Overall P&L · `<Period>` P&L
+  (or *Last 30 Days P&L* when `--period all`) · Floating P&L · Growth. Each is
+  colour-coded green/red by sign.
+* **Page 1 — Account Composition strip**: Equity · Cash · Long Market Value ·
+  Buying Power · Net Capital.
+* **Page 1 — Open Position Detail table**: ticker, qty, current price, market
+  value.
+* **Page 2 — Closed Trade Log**: ticker, side, time, qty, price, notional,
+  per-trade realized P&L (FIFO-matched: `(sell − buy) × matched_qty`), status.
+  The page-2 tagbar shows the summed realized P&L across all visible orders.
 
 ## Scheduling
 
@@ -130,10 +122,9 @@ apex-reports/
 ├── run_reports.py             # CLI orchestrator
 ├── api_client.py              # GemAlgo HTTP client
 ├── data_mapper.py             # raw API → view-model
-├── dashboard_renderer.py      # Jinja2 + inline SVG charts
+├── dashboard_renderer.py      # Jinja2 renderer
 ├── pdf_generator.py           # Playwright HTML→PDF
 ├── pdf_merger.py              # pypdf merge + bookmarks
-├── email_sender.py            # SMTP delivery
 └── templates/
     └── dashboard.html         # Self-contained dashboard
 ```
@@ -147,18 +138,15 @@ apex-reports/
 → The renderer waits up to 8 s for Google Fonts. If your environment blocks
 `fonts.googleapis.com`, host the fonts locally.
 
-**SMTP authentication fails on Gmail**
-→ Use an *App Password*; `SMTP_PORT=587`, `SMTP_USE_TLS=true`.
-
 **One client failure aborts the run**
 → It shouldn't — mapping and render errors are caught per-client and reported
 in the summary. Only a failure on the single `/all-clients-data` call (network
 or HTTP error) aborts the run.
 
-**Re-running for the same month duplicates files**
+**Re-running for the same period duplicates files**
 → It does not. Per-client PDFs and the merged PDF are overwritten in place.
 
 ## Security notes
 
-- `api_code`, SMTP password, and account numbers are never logged.
+- `api_code` and account numbers are never logged.
 - All secrets come from `.env`; only `.env.example` is committed.
