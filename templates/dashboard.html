@@ -143,6 +143,12 @@ td.num, th.num { text-align: right; font-family: 'DM Mono', monospace; }
 td.up { color: var(--green); font-weight: 700; }
 td.down { color: var(--red); font-weight: 700; }
 
+/* Closed-trade log: center-align every column for a balanced ledger look. */
+table.centered thead th,
+table.centered tbody td,
+table.centered tbody td.num,
+table.centered thead th.num { text-align: center; }
+
 .chip {
   display: inline-block; padding: 1px 7px; border-radius: 9px;
   background: var(--surface-2); border: 1px solid var(--border);
@@ -187,7 +193,7 @@ td.down { color: var(--red); font-weight: 700; }
   <div class="footer">
     <div>All figures are for informational purposes only and do not constitute financial advice.</div>
     <div>{{ source_site }}</div>
-    <div>Page {{ num }} of 2 · {{ client.strategy }} · {{ perf.period_label }} · Confidential</div>
+    <div>Page {{ num }} of {{ total_pages }} · {{ client.strategy }} · {{ perf.period_label }} · Confidential</div>
   </div>
 {% endmacro %}
 
@@ -217,66 +223,56 @@ td.down { color: var(--red); font-weight: 700; }
     <div class="kpi accent">
       <div class="label">Account Balance</div>
       <div class="value accent">{{ fmt_money(perf.account_size) }}</div>
-      <div class="sub">Equity {{ fmt_money(perf.equity) }} · Cash {{ fmt_money(perf.cash) }}</div>
     </div>
     <div class="kpi {{ 'up' if perf.realized_pnl >= 0 else 'down' }}">
       <div class="label">Overall P&amp;L</div>
       <div class="value {{ 'up' if perf.realized_pnl >= 0 else 'down' }}">{{ fmt_money_signed(perf.realized_pnl) }}</div>
-      <div class="sub">{{ fmt_pct_signed(perf.overall_roi_pct) }} ROI · {{ perf.total_trades }} trades</div>
     </div>
+    {% if perf.report_period == 'all' %}
+    <div class="kpi {{ 'up' if perf.last_30d_pnl >= 0 else 'down' }}">
+      <div class="label">Last 30 Days P&amp;L</div>
+      <div class="value {{ 'up' if perf.last_30d_pnl >= 0 else 'down' }}">{{ fmt_money_signed(perf.last_30d_pnl) }}</div>
+    </div>
+    {% else %}
     <div class="kpi {{ 'up' if (perf.period_pnl or 0) >= 0 else 'down' }}">
       <div class="label">{{ perf.period_label }} P&amp;L</div>
       {% if perf.period_pnl is none %}
       <div class="value" style="color: var(--muted);">—</div>
-      <div class="sub">Not exposed by API</div>
       {% else %}
       <div class="value {{ 'up' if perf.period_pnl >= 0 else 'down' }}">{{ fmt_money_signed(perf.period_pnl) }}</div>
-      {% if perf.report_period == 'all' %}
-      <div class="sub">{{ fmt_pct_signed(perf.period_pnl_pct) }} · Realized {{ fmt_money_signed(perf.realized_pnl) }}</div>
-      {% else %}
-      <div class="sub">{{ fmt_pct_signed(perf.period_pnl_pct) }} over period</div>
-      {% endif %}
       {% endif %}
     </div>
+    {% endif %}
     <div class="kpi {{ 'up' if perf.floating_pnl >= 0 else 'down' }}">
       <div class="label">Floating P&amp;L</div>
       <div class="value {{ 'up' if perf.floating_pnl >= 0 else 'down' }}">{{ fmt_money_signed(perf.floating_pnl) }}</div>
-      <div class="sub">{{ fmt_pct_signed(perf.floating_pnl_pct) }} unrealised</div>
     </div>
     <div class="kpi {{ 'up' if perf.equity_growth_dollar >= 0 else 'down' }}">
       <div class="label">Growth</div>
       <div class="value {{ 'up' if perf.equity_growth_dollar >= 0 else 'down' }}">{{ fmt_pct_signed(perf.equity_growth_pct) }}</div>
-      <div class="sub">{{ fmt_money_signed(perf.realized_pnl) }} realized · Net cap {{ fmt_money(perf.total_deposits - perf.total_withdrawals) }}</div>
     </div>
   </div>
 
   <div class="section">
-    <div class="card chart-card">
-      <div class="card-head">
-        <div class="title">Open Positions — Floating P&amp;L by Ticker</div>
-        <div class="total" style="color: {{ 'var(--green)' if perf.floating_pnl >= 0 else 'var(--red)' }};">{{ fmt_money_signed(perf.floating_pnl) }}</div>
-      </div>
-      <div class="badges">
-        <span class="badge primary">{{ perf.open_positions_count }} Positions</span>
-        <span class="badge up">{{ open_gaining }} Gaining</span>
-        <span class="badge down">{{ open_losing }} Losing</span>
-      </div>
-      <div class="chart-wrap">{{ open_chart_svg | safe }}</div>
+    <div class="tagbar">
+      <span>Equity: <b class="mono">{{ fmt_money(perf.equity) }}</b></span><span class="sep"></span>
+      <span>Cash: <b class="mono">{{ fmt_money(perf.cash) }}</b></span><span class="sep"></span>
+      <span>Long Market Value: <b class="mono">{{ fmt_money(perf.long_market_value) }}</b></span><span class="sep"></span>
+      <span>Buying Power: <b class="mono">{{ fmt_money(perf.buying_power) }}</b></span><span class="sep"></span>
+      <span>Net Capital: <b class="mono">{{ fmt_money(perf.total_deposits - perf.total_withdrawals) }}</b></span>
     </div>
 
     <div class="card table-card">
       <div class="card-head">
         <div class="title">Open Position Detail</div>
-        <span class="badge {{ 'up' if perf.floating_pnl >= 0 else 'down' }}">Floating {{ fmt_money_signed(perf.floating_pnl) }}</span>
+        <span class="badge primary">{{ perf.open_positions_count }} positions</span>
       </div>
-      <table>
+      <table class="centered">
         <thead><tr>
-          <th style="width: 16%">Ticker</th>
-          <th class="num" style="width: 10%">Qty</th>
-          <th class="num" style="width: 18%">Price</th>
-          <th class="num" style="width: 20%">Market Value</th>
-          <th class="num" style="width: 16%">Floating %</th>
-          <th class="num" style="width: 20%">Floating $</th>
+          <th style="width: 25%">Ticker</th>
+          <th class="num" style="width: 15%">Qty</th>
+          <th class="num" style="width: 25%">Price</th>
+          <th class="num" style="width: 35%">Market Value</th>
         </tr></thead>
         <tbody>
           {% for p in perf.open_positions %}
@@ -285,11 +281,9 @@ td.down { color: var(--red); font-weight: 700; }
             <td class="num">{{ '{:,}'.format(p.qty) }}</td>
             <td class="num">{{ fmt_money(p.current_price) }}</td>
             <td class="num">{{ fmt_money(p.market_value) }}</td>
-            <td class="num {{ 'up' if p.floating_pct >= 0 else 'down' }}">{{ fmt_pct_signed(p.floating_pct) }}</td>
-            <td class="num {{ 'up' if p.floating_dollar >= 0 else 'down' }}">{{ fmt_money_signed(p.floating_dollar) }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:14px">No open positions</td></tr>
+          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:14px">No open positions</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -300,56 +294,64 @@ td.down { color: var(--red); font-weight: 700; }
 </div>
 
 
-<!-- =================== PAGE 2 — Closed Trades / Orders =================== -->
+<!-- =================== PAGES 2..N — Closed Trades (paginated) =================== -->
+{% for chunk in trade_chunks %}
 <div class="page">
 
-  {{ page_header("Closed Trades & Order Activity") }}
+  {{ page_header("Closed Trades & Order Activity" + (" (continued)" if not loop.first else "")) }}
 
   <div class="tagbar">
     <span>Period: <b>{{ perf.period_label }}</b></span><span class="sep"></span>
-    <span>Orders: <b>{{ perf.recent_orders|length }}</b></span><span class="sep"></span>
-    <span>Buys: <b>{{ buy_count }}</b></span><span class="sep"></span>
-    <span>Sells: <b>{{ sell_count }}</b></span><span class="sep"></span>
-    <span>Total notional: <b class="mono">{{ fmt_money(orders_notional_total) }}</b></span>
+    <span>Closed Trades: <b>{{ perf.closed_trades|length }}</b></span><span class="sep"></span>
+    <span>Realized P&amp;L:
+      <b class="mono {{ 'up' if closed_trades_pnl >= 0 else 'down' }}">{{ fmt_money_signed(closed_trades_pnl) }}</b>
+    </span>
+    {% if trade_chunks|length > 1 %}
+    <span class="sep"></span>
+    <span>Showing <b>{{ loop.index }}</b> of <b>{{ trade_chunks|length }}</b></span>
+    {% endif %}
   </div>
 
   <div class="section">
     <div class="card table-card">
       <div class="card-head">
-        <div class="title">Closed Trade Log · {{ perf.period_label }}</div>
-        <span class="badge primary">{{ perf.recent_orders|length }} total</span>
+        <div class="title">Closed Trade Log · {{ perf.period_label }}{% if not loop.first %} (continued){% endif %}</div>
+        <span class="badge primary">{{ perf.closed_trades|length }} trades</span>
       </div>
-      <table>
+      <table class="centered">
         <thead><tr>
-          <th style="width: 14%">Ticker</th>
-          <th style="width: 10%">Side</th>
-          <th style="width: 22%">When</th>
-          <th class="num" style="width: 10%">Qty</th>
-          <th class="num" style="width: 15%">Price</th>
-          <th class="num" style="width: 17%">Notional</th>
+          <th style="width: 11%">Ticker</th>
+          <th style="width: 14%">Buy Date</th>
+          <th class="num" style="width: 12%">Buy Price</th>
+          <th style="width: 14%">Sell Date</th>
+          <th class="num" style="width: 12%">Sell Price</th>
+          <th class="num" style="width: 9%">Qty</th>
+          <th class="num" style="width: 16%">P&amp;L</th>
           <th style="width: 12%">Status</th>
         </tr></thead>
         <tbody>
-          {% for o in perf.recent_orders %}
+          {% for t in chunk %}
           <tr>
-            <td><span class="chip">{{ o.ticker }}</span></td>
-            <td><span class="pill {{ 'buy' if o.side == 'buy' else 'sell' }}">{{ o.side|upper }}</span></td>
-            <td>{{ o.when }}</td>
-            <td class="num">{{ '{:,}'.format(o.qty) }}</td>
-            <td class="num">{{ fmt_money(o.price) }}</td>
-            <td class="num">{{ fmt_money(o.notional) }}</td>
-            <td><span style="color:var(--muted)">{{ o.status }}</span></td>
+            <td><span class="chip">{{ t.ticker }}</span></td>
+            <td>{{ t.buy_when }}</td>
+            <td class="num">{{ fmt_money(t.buy_price) }}</td>
+            <td>{{ t.sell_when }}</td>
+            <td class="num">{{ fmt_money(t.sell_price) }}</td>
+            <td class="num">{{ '{:,}'.format(t.qty) }}</td>
+            <td class="num {{ 'up' if t.pnl >= 0 else 'down' }}">{{ fmt_money_signed(t.pnl) }}</td>
+            <td><span style="color:var(--muted)">{{ t.status }}</span></td>
           </tr>
           {% else %}
-          <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:14px">No orders in this period</td></tr>
+          <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:14px">No closed trades in this period</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
 
-  {{ page_footer(2) }}
+  {{ page_footer(loop.index + 1) }}
 </div>
+{% endfor %}
 
 
 <script>

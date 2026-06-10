@@ -46,7 +46,7 @@ class APIClient:
         retry_strategy = Retry(
             total=_MAX_RETRIES,
             backoff_factor=_BACKOFF_FACTOR,
-            status_forcelist=[502, 503, 504],
+            status_forcelist=[500, 502, 503, 504],
             allowed_methods=["GET"],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
